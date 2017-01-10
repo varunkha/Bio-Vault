@@ -1,0 +1,89 @@
+******************************Part 2 Query 1******************************
+
+select count(P_ID) from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID) where DESCRIPTION='tumor';
+
+select count(P_ID) from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID) where TYPE='leukemia';
+
+select count(P_ID) from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID) where NAME='ALL';
+
+******************************Part 2 Query 2******************************
+
+select distinct DIM_DRUG.TYPE from FACT_CLINICAL inner join (select P_ID from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID) where DESCRIPTION='tumor') using(P_ID) inner join DIM_DRUG using(DR_ID) order by 1;
+
+******************************Part 2 Query 3******************************
+
+select P_ID, S_ID, UID_COLUMN, PB_ID, EXP from FACT_MICROARRAY inner join
+(select P_ID, S_ID from FACT_CLINICAL inner join
+(select P_ID from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID) where NAME='ALL')
+using(P_ID) where S_ID is not NULL)
+using(S_ID) inner join DIM_PROBE using(PB_ID) inner join FACT_GENE using(UID_COLUMN)
+where CL_ID=2 and mu_id=1 order by P_ID, UID_COLUMN;
+
+******************************Part 2 Query 4******************************
+
+with c as (select exp,case b.NAME when 'ALL' then 'ALL' else 'OTHER' end as DISEASE from FACT_MICROARRAY inner join
+(select S_ID,a.NAME from FACT_CLINICAL inner join
+(select P_ID,DIM_DISEASE.NAME from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) a using(P_ID) where S_ID is not NULL) b
+using(S_ID) inner join DIM_PROBE using(PB_ID) inner join FACT_GENE using(UID_COLUMN)
+where GO_ID=12502 order by DISEASE)
+select STATS_T_TEST_INDEP(DISEASE,exp,'STATISTIC','ALL') t_statistics, STATS_T_TEST_INDEP(DISEASE,exp) p_value from c;
+
+******************************Part 2 Query 5******************************
+
+with c as (select exp, DISEASE from FACT_MICROARRAY inner join
+(select S_ID,DISEASE from FACT_CLINICAL inner join
+(select P_ID,DIM_DISEASE.NAME as DISEASE from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) a using(P_ID) where S_ID is not NULL) b
+using(S_ID) inner join DIM_PROBE using(PB_ID) inner join FACT_GENE using(UID_COLUMN)
+where GO_ID=7154 and DISEASE IN ('ALL','AML','Colon tumor','Breast tumor') order by DISEASE)
+SELECT STATS_ONE_WAY_ANOVA(DISEASE,exp,'F_RATIO') as F_RATIO,STATS_ONE_WAY_ANOVA(DISEASE,exp) as p_value FROM c;
+
+******************************Part 2 Query 6 SubPart 1******************************
+
+with temp as (select P_ID, UID_COLUMN, DISEASE, exp from FACT_MICROARRAY inner join
+(select P_ID,S_ID,DISEASE from FACT_CLINICAL inner join
+(select P_ID,DIM_DISEASE.NAME as DISEASE from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) a using(P_ID) where S_ID is not NULL) b
+using(S_ID) inner join DIM_PROBE using(PB_ID) inner join FACT_GENE using(UID_COLUMN)
+where GO_ID=7154 and DISEASE ='ALL' order by 1,2,3)
+select avg(corr(t1.exp,t2.exp)) AVG_CORR_ALL from (select P_ID,UID_COLUMN,exp from temp) t1 inner join
+(select P_ID,UID_COLUMN,exp from temp) t2
+on t1.P_ID<t2.P_ID and t1.UID_COLUMN=t2.UID_COLUMN
+group by t1.P_ID,t2.P_ID;
+
+******************************Part 2 Query 6 SubPart 2******************************
+
+with temp as (select P_ID, UID_COLUMN, DISEASE, exp from FACT_MICROARRAY inner join
+(select P_ID,S_ID,DISEASE from FACT_CLINICAL inner join
+(select P_ID,DIM_DISEASE.NAME as DISEASE from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) a using(P_ID) where S_ID is not NULL) b using(S_ID) inner join
+DIM_PROBE using(PB_ID) inner join FACT_GENE using(UID_COLUMN)
+where GO_ID=7154 and DISEASE in ('ALL','AML') order by 1,2,3)
+select avg(corr(t1.exp,t2.exp)) AVG_CORR_ALL from (select P_ID,UID_COLUMN,exp from temp where DISEASE='ALL') t1 inner join
+(select P_ID,UID_COLUMN,exp from temp where DISEASE='AML') t2
+on t1.UID_COLUMN=t2.UID_COLUMN group by t1.P_ID,t2.P_ID;
+
+******************************Part 3 Informative Genes******************************
+
+with temp as (select UID_COLUMN,PB_ID,EXP,case DISEASE when 'ALL' then 'ALL' else 'OTHER' end DISEASE from FACT_MICROARRAY inner join
+(select P_ID,S_ID,DISEASE from FACT_CLINICAL inner join
+(select P_ID,NAME as DISEASE from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) using(P_ID) where S_ID is not NULL)
+using(S_ID) inner join
+DIM_PROBE using(PB_ID)
+order by UID_COLUMN,DISEASE,PB_ID)
+select UID_COLUMN,STATS_T_TEST_INDEP(DISEASE,exp,'STATISTIC','ALL') t_statistics, STATS_T_TEST_INDEP(DISEASE,exp) p_value from temp
+group by UID_COLUMN having STATS_T_TEST_INDEP(DISEASE,exp)<0.01;
+
+******************************Part 3 Prediction******************************
+
+with temp as (select P_ID,DISEASE,UID_COLUMN,EXP from FACT_MICROARRAY inner join
+(select P_ID,S_ID,case DISEASE when 'ALL' then 'ALL' else 'OTHER' end DISEASE from FACT_CLINICAL inner join
+(select P_ID,DIM_DISEASE.NAME as DISEASE from FACT_CLINICAL inner join DIM_DISEASE using(DS_ID)) a using(P_ID) where S_ID is not NULL) b
+using(S_ID) inner join
+DIM_PROBE using(PB_ID)
+where UID_COLUMN in (select UID_COLUMN from DIM_INFORMATIVE_ALL) order by DISEASE,P_ID,UID_COLUMN)
+select p2,STATS_T_TEST_INDEP(DISEASE,correlation,'STATISTIC','ALL') t_statistics, STATS_T_TEST_INDEP(DISEASE,correlation) p_value, case when STATS_T_TEST_INDEP(DISEASE,correlation) < 0.01 then 'ALL' else 'Negative' end Result from
+(select temp.P_ID p1,test.P_ID p2,temp.DISEASE DISEASE,corr(temp.EXP,test.EXP) correlation from temp inner join
+(select P_ID,UID_COLUMN,EXP from DIM_TEST_SAMPLE2 where UID_COLUMN in (select UID_COLUMN from DIM_INFORMATIVE_ALL)) test
+using(UID_COLUMN)
+group by temp.P_ID,test.P_ID,temp.DISEASE order by 2,3)
+group by p2;
+
+******************************THE END******************************
